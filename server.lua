@@ -801,6 +801,146 @@ local function getBridgeStats()
     return stats
 end
 
+local function backfillSyncFromVMSFines(limit)
+    if not getConfigValue('EnableFinesBackfill', false) then
+        return {
+            checked = 0,
+            synced = 0,
+            failed = 0,
+            skipped = 0
+        }
+    end
+
+    local finesTable = safeString(getConfigValue('VMSFinesTable', 'fines'), 'fines')
+    local idColumn = safeString(getConfigValue('VMSFineIdColumn', 'id'), 'id')
+    local typeColumn = safeString(getConfigValue('VMSFineTypeColumn', 'type'), 'type')
+    local dataColumn = safeString(getConfigValue('VMSFineDataColumn', 'data'), 'data')
+    local targetIdentifierColumn = safeString(getConfigValue('VMSFineTargetIdentifierColumn', 'identifier'), 'identifier')
+    local targetNameColumn = getConfigValue('VMSFineTargetNameColumn', nil)
+    local officerIdentifierColumn = getConfigValue('VMSFineOfficerIdentifierColumn', nil)
+    local officerNameColumn = getConfigValue('VMSFineOfficerNameColumn', nil)
+
+    local rows = MySQL.query.await(([[ 
+        SELECT f.*
+        FROM `%s` f
+        LEFT JOIN `vms_cityhall_wasabi_bridge_sync` b ON b.fine_id = CAST(f.`%s` AS CHAR)
+        WHERE b.fine_id IS NULL
+        ORDER BY f.`%s` DESC
+        LIMIT ?
+    ]]):format(finesTable, idColumn, idColumn), { limit or getConfigValue('FinesBackfillBatchSize', 50) }) or {}
+
+    local stats = {
+        checked = #rows,
+        synced = 0,
+        failed = 0,
+        skipped = 0
+    }
+
+    for _, row in ipairs(rows) do
+        local fineId = tostring(row[idColumn] or '')
+        if fineId == '' then
+            stats.failed = stats.failed + 1
+            goto continue
+        end
+
+        local billType = safeString(row[typeColumn], nil)
+        local billData = jsonDecode(row[dataColumn]) or {}
+
+        if not billType then
+            billType = safeString(billData.type, 'ticket')
+        end
+
+        if not getConfigValue('AllowedBillTypes', {})[billType] then
+            debugLog('Backfill skip fineId=%s unknown billType=%s', fineId, tostring(billType))
+            stats.skipped = stats.skipped + 1
+            goto continue
+        end
+
+        local targetIdentifier = safeString(row[targetIdentifierColumn], nil) or safeString(billData.identifier, nil)
+        local targetName = safeString(targetNameColumn and row[targetNameColumn] or nil, nil)
+            or safeString(billData.targetName, nil)
+            or getConfigValue('FallbackTargetName', 'Unbekannt')
+
+        local officerIdentifier = safeString(officerIdentifierColumn and row[officerIdentifierColumn] or nil, nil)
+            or safeString(billData.officerIdentifier, nil)
+        local officerName = safeString(officerNameColumn and row[officerNameColumn] or nil, nil)
+            or safeString(billData.issuerName, nil)
+            or getConfigValue('FallbackOfficerName', 'Unbekannter Officer')
+
+        local amountFromRow = safeNumber(row.amount, nil)
+        if amountFromRow ~= nil and billData.amount == nil then
+            billData.amount = amountFromRow
+        end
+
+        if billData.locationOfViolation == nil then
+            billData.locationOfViolation = getConfigValue('DefaultLocation', 'Unbekannt')
+        end
+
+        insertOrUpdateSyncRecord({
+            fineId = fineId,
+            billType = billType,
+            officerSrc = nil,
+            officerIdentifier = officerIdentifier,
+            officerName = officerName,
+            targetSrc = nil,
+            targetIdentifier = targetIdentifier,
+            targetName = targetName,
+            status = getConfigValue('SyncStatuses', {}).bill_created or 'bill_created',
+            attempts = 0,
+            lastError = nil,
+            payloadJson = jsonEncode({
+                billType = billType,
+                billData = billData,
+                options = {}
+            }),
+            chargePayloadJson = nil
+        })
+
+        if not shouldSyncBillTypeToMDT(billType) then
+            markSyncStatus(fineId, getConfigValue('SyncStatuses', {}).skipped or 'skipped', nil, 'sync disabled by config for bill type')
+            stats.skipped = stats.skipped + 1
+            goto continue
+        end
+
+        local category = getChargeCategory(billType, billData, {})
+        local jailTime = getJailTimeForCharge(category, billType, billData, {})
+
+        local chargePayload = buildChargePayload({
+            fineId = fineId,
+            billType = billType,
+            billData = billData,
+            category = category,
+            jailTime = jailTime,
+            officerIdentifier = officerIdentifier,
+            officerName = officerName,
+            targetIdentifier = targetIdentifier,
+            targetName = targetName
+        })
+
+        MySQL.update.await('UPDATE vms_cityhall_wasabi_bridge_sync SET charge_payload_json = ? WHERE fine_id = ?', {
+            jsonEncode(chargePayload),
+            fineId
+        })
+
+        local syncResult, syncErr = syncFineToMDT({
+            fineId = fineId,
+            chargePayload = chargePayload
+        })
+
+        if not syncResult then
+            stats.failed = stats.failed + 1
+            log('ERROR', 'Backfill sync failed fineId=%s err=%s', fineId, tostring(syncErr))
+        else
+            stats.synced = stats.synced + 1
+            debugLog('Backfill synced fineId=%s chargeId=%s', fineId, tostring(syncResult.chargeId))
+        end
+
+        ::continue::
+    end
+
+    return stats
+end
+
 exports('GiveBillAndSyncMDT', giveBillAndSyncMDT)
 
 RegisterNetEvent('vms_cityhall_wasabi_bridge:GiveBillAndSyncMDT', function(targetSrc, billType, billData, options)
@@ -958,6 +1098,27 @@ RegisterCommand('bridge_resync', function(src, args)
     end
 end, false)
 
+RegisterCommand('bridge_backfill', function(src, args)
+    if not hasCommandPermission(src) then
+        return
+    end
+
+    local limit = safeNumber(args[1], getConfigValue('FinesBackfillBatchSize', 50))
+    local result = backfillSyncFromVMSFines(limit)
+    local msg = ('backfill done: checked=%s synced=%s failed=%s skipped=%s'):format(
+        result.checked,
+        result.synced,
+        result.failed,
+        result.skipped
+    )
+
+    if src == 0 then
+        print(msg)
+    else
+        TriggerClientEvent('chat:addMessage', src, { args = { 'bridge', msg } })
+    end
+end, false)
+
 CreateThread(function()
     Wait(1000)
 
@@ -969,5 +1130,27 @@ CreateThread(function()
         log('INFO', 'AutoResync complete: total=%s success=%s failed=%s', result.total, result.success, result.failed)
     else
         log('INFO', 'AutoResyncOnStart disabled; use /bridge_resync failed or /bridge_resync all')
+    end
+
+    if getConfigValue('EnableFinesBackfill', false) then
+        log('INFO', 'Fines backfill enabled (table=%s, intervalMs=%s)', tostring(getConfigValue('VMSFinesTable', 'fines')), tostring(getConfigValue('FinesBackfillIntervalMs', 15000)))
+    else
+        log('INFO', 'Fines backfill disabled')
+    end
+end)
+
+CreateThread(function()
+    while true do
+        local enabled = getConfigValue('EnableFinesBackfill', false)
+        local interval = safeNumber(getConfigValue('FinesBackfillIntervalMs', 15000), 15000)
+        if enabled then
+            local ok, result = pcall(backfillSyncFromVMSFines, getConfigValue('FinesBackfillBatchSize', 50))
+            if not ok then
+                log('ERROR', 'Backfill loop runtime error: %s', tostring(result))
+            elseif result.checked > 0 then
+                log('INFO', 'Backfill processed: checked=%s synced=%s failed=%s skipped=%s', result.checked, result.synced, result.failed, result.skipped)
+            end
+        end
+        Wait(math.max(5000, interval))
     end
 end)

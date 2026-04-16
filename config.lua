@@ -100,6 +100,21 @@ Config.MaxSyncAttempts = 10
 Config.AutoResyncOnStart = false
 Config.AutoResyncDelayMs = 5000
 
+-- Optional compatibility mode:
+-- Pull freshly created VMS fines directly from the VMS fines table
+-- so tickets created outside this bridge can still be synced to MDT.
+Config.EnableFinesBackfill = true
+Config.FinesBackfillIntervalMs = 15000
+Config.FinesBackfillBatchSize = 50
+Config.VMSFinesTable = 'fines'
+Config.VMSFineIdColumn = 'id'
+Config.VMSFineTypeColumn = 'type'
+Config.VMSFineDataColumn = 'data'
+Config.VMSFineTargetIdentifierColumn = 'identifier'
+Config.VMSFineTargetNameColumn = nil
+Config.VMSFineOfficerIdentifierColumn = nil
+Config.VMSFineOfficerNameColumn = nil
+
 -- Restrict command access quickly; keep nil for open access.
 -- Example: 'group.admin' or function(src) return IsPlayerAceAllowed(src, 'bridge.admin') end
 Config.CommandPermission = nil
