@@ -823,7 +823,9 @@ local function backfillSyncFromVMSFines(limit)
     local rows = MySQL.query.await(([[ 
         SELECT f.*
         FROM `%s` f
-        LEFT JOIN `vms_cityhall_wasabi_bridge_sync` b ON b.fine_id = CAST(f.`%s` AS CHAR)
+        LEFT JOIN `vms_cityhall_wasabi_bridge_sync` b
+            ON b.fine_id REGEXP '^[0-9]+$'
+            AND CAST(b.fine_id AS UNSIGNED) = f.`%s`
         WHERE b.fine_id IS NULL
         ORDER BY f.`%s` DESC
         LIMIT ?
