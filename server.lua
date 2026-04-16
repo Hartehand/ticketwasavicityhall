@@ -316,45 +316,59 @@ local function buildChargeTitle(fineId, billType, billData, category)
 end
 
 local function buildChargeDescription(ctx)
+    local function boolToJaNein(value)
+        return value == true and 'Ja' or 'Nein'
+    end
+
     local lines = {
-        'CITYHALL ENTRY',
-        ('Fine ID: %s'):format(safeString(ctx.fineId, 'unknown')),
-        ('Type: %s'):format(safeString(ctx.billType, 'unknown')),
-        ('Category: %s'):format(safeString(ctx.category, 'unknown')),
+        '=== CITYHALL TICKET ===',
+        ('Fine ID: %s'):format(safeString(ctx.fineId, 'unbekannt')),
+        ('Typ: %s'):format(safeString(ctx.billType, 'unbekannt')),
+        ('Kategorie: %s'):format(safeString(ctx.category, 'unbekannt')),
         '',
-        'PARTIES',
-        ('Recipient: %s'):format(safeString(ctx.targetName, 'unknown')),
-        ('Recipient-ID: %s'):format(safeString(ctx.targetIdentifier, 'unknown')),
-        ('Issued by: %s'):format(safeString(ctx.officerName, 'unknown')),
-        ('Officer-ID: %s'):format(safeString(ctx.officerIdentifier, 'unknown'))
+        '=== BETEILIGTE ===',
+        ('Empfänger: %s'):format(safeString(ctx.targetName, 'unbekannt')),
+        ('Empfänger-ID: %s'):format(safeString(ctx.targetIdentifier, 'unbekannt')),
+        ('Ausgestellt von: %s'):format(safeString(ctx.officerName, 'unbekannt')),
+        ('Officer-ID: %s'):format(safeString(ctx.officerIdentifier, 'unbekannt')),
+        '',
+        '=== VERSTOSS ===',
+        ('Ort: %s'):format(safeString(ctx.billData.locationOfViolation, getConfigValue('DefaultLocation', 'Unbekannt'))),
+        ('Verstoß: %s'):format(safeString(ctx.billData.violation, 'n/a'))
     }
 
     local amount = safeNumber(ctx.billData.amount, nil)
     if amount ~= nil then
-        lines[#lines + 1] = ('Amount: %s'):format(amount)
+        lines[#lines + 1] = ('Betrag: $%s'):format(amount)
     end
 
-    if ctx.billData.locationOfViolation then
-        lines[#lines + 1] = ('Location: %s'):format(safeString(ctx.billData.locationOfViolation, getConfigValue('DefaultLocation', 'Unbekannt')))
-    end
+    lines[#lines + 1] = ('Kommentar: %s'):format(safeString(ctx.billData.comments, 'keine'))
 
-    if ctx.billData.violation then
-        lines[#lines + 1] = ('Violation: %s'):format(safeString(ctx.billData.violation, 'n/a'))
-    end
+    local hasTrafficData = (
+        type(ctx.billData.vehicle) == 'table'
+        or ctx.billData.license ~= nil
+        or ctx.billData.licenseRevocation ~= nil
+        or ctx.billData.licenseSuspensionTime ~= nil
+        or ctx.billData.penaltyPointsCount ~= nil
+    )
 
-    if ctx.billData.comments then
-        lines[#lines + 1] = ('Comments: %s'):format(safeString(ctx.billData.comments, 'n/a'))
-    end
-
-    local vehicle = ctx.billData.vehicle
-    if type(vehicle) == 'table' then
+    if hasTrafficData then
+        local vehicle = type(ctx.billData.vehicle) == 'table' and ctx.billData.vehicle or {}
         lines[#lines + 1] = ''
-        lines[#lines + 1] = 'VEHICLE'
-        lines[#lines + 1] = ('Plate: %s'):format(safeString(vehicle.plate, 'n/a'))
-        lines[#lines + 1] = ('Make: %s'):format(safeString(vehicle.make, 'n/a'))
-        lines[#lines + 1] = ('Model: %s'):format(safeString(vehicle.model, 'n/a'))
+        lines[#lines + 1] = '=== VERKEHRSBEZOGENE DATEN ==='
+        lines[#lines + 1] = ('Lizenz: %s'):format(safeString(ctx.billData.license, 'n/a'))
+        lines[#lines + 1] = ('Lizenzentzug: %s'):format(boolToJaNein(ctx.billData.licenseRevocation))
+        lines[#lines + 1] = ('Lizenzsperre: %s'):format(safeNumber(ctx.billData.licenseSuspensionTime, 0))
+        lines[#lines + 1] = ('Punkte: %s'):format(safeNumber(ctx.billData.penaltyPointsCount, 0))
+        lines[#lines + 1] = ('Fahrzeugmarke: %s'):format(safeString(vehicle.make, 'n/a'))
+        lines[#lines + 1] = ('Fahrzeugmodell: %s'):format(safeString(vehicle.model, 'n/a'))
+        lines[#lines + 1] = ('Kennzeichen: %s'):format(safeString(vehicle.plate, 'n/a'))
         lines[#lines + 1] = ('VIN: %s'):format(safeString(vehicle.vin, 'n/a'))
     end
+
+    lines[#lines + 1] = ''
+    lines[#lines + 1] = '---'
+    lines[#lines + 1] = 'Hinweis: Ab hier können nachträgliche Bemerkungen des Officers ergänzt werden.'
 
     return table.concat(lines, '\n')
 end
