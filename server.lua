@@ -896,6 +896,8 @@ local function backfillSyncFromVMSFines(limit)
             OR b.target_name IS NULL
             OR b.officer_name REGEXP '^char[0-9]+:'
             OR b.target_name REGEXP '^char[0-9]+:'
+            OR b.officer_name = 'Unbekannter Officer'
+            OR b.target_name = 'Unbekannt'
         ORDER BY f.`%s` DESC
         LIMIT ?
     ]]):format(finesTable, idColumn, idColumn), { limit or getConfigValue('FinesBackfillBatchSize', 50) }) or {}
