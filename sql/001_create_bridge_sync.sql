@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS `vms_cityhall_wasabi_bridge_sync` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `fine_id` VARCHAR(64) NOT NULL,
+    `charge_id` BIGINT NULL,
+    `bill_type` VARCHAR(32) NOT NULL,
+    `officer_src` INT NULL,
+    `officer_identifier` VARCHAR(128) NULL,
+    `officer_name` VARCHAR(128) NULL,
+    `target_src` INT NULL,
+    `target_identifier` VARCHAR(128) NULL,
+    `target_name` VARCHAR(128) NULL,
+    `status` VARCHAR(32) NOT NULL,
+    `attempts` INT NOT NULL DEFAULT 0,
+    `last_error` TEXT NULL,
+    `payload_json` LONGTEXT NULL,
+    `charge_payload_json` LONGTEXT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_vms_cityhall_wasabi_bridge_sync_fine_id` (`fine_id`),
+    KEY `idx_vms_cityhall_wasabi_bridge_sync_status` (`status`),
+    KEY `idx_vms_cityhall_wasabi_bridge_sync_charge_id` (`charge_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
