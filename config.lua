@@ -110,9 +110,9 @@ Config.VMSFinesTable = 'fines'
 Config.VMSFineIdColumn = 'id'
 Config.VMSFineTypeColumn = 'type'
 Config.VMSFineDataColumn = 'data'
-Config.VMSFineTargetIdentifierColumn = 'identifier'
+Config.VMSFineTargetIdentifierColumn = 'receiver'
 Config.VMSFineTargetNameColumn = nil
-Config.VMSFineOfficerIdentifierColumn = nil
+Config.VMSFineOfficerIdentifierColumn = 'issuer'
 Config.VMSFineOfficerNameColumn = nil
 
 -- Restrict command access quickly; keep nil for open access.

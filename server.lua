@@ -827,6 +827,10 @@ local function backfillSyncFromVMSFines(limit)
             ON b.fine_id REGEXP '^[0-9]+$'
             AND CAST(b.fine_id AS UNSIGNED) = f.`%s`
         WHERE b.fine_id IS NULL
+            OR b.officer_identifier IS NULL
+            OR b.target_identifier IS NULL
+            OR b.officer_name IS NULL
+            OR b.target_name IS NULL
         ORDER BY f.`%s` DESC
         LIMIT ?
     ]]):format(finesTable, idColumn, idColumn), { limit or getConfigValue('FinesBackfillBatchSize', 50) }) or {}
@@ -858,15 +862,23 @@ local function backfillSyncFromVMSFines(limit)
             goto continue
         end
 
-        local targetIdentifier = safeString(row[targetIdentifierColumn], nil) or safeString(billData.identifier, nil)
+        local targetIdentifier = safeString(row[targetIdentifierColumn], nil)
+            or safeString(row.receiver, nil)
+            or safeString(billData.receiver, nil)
+            or safeString(billData.identifier, nil)
         local targetName = safeString(targetNameColumn and row[targetNameColumn] or nil, nil)
             or safeString(billData.targetName, nil)
+            or safeString(billData.receiverName, nil)
+            or targetIdentifier
             or getConfigValue('FallbackTargetName', 'Unbekannt')
 
         local officerIdentifier = safeString(officerIdentifierColumn and row[officerIdentifierColumn] or nil, nil)
+            or safeString(row.issuer, nil)
+            or safeString(billData.issuer, nil)
             or safeString(billData.officerIdentifier, nil)
         local officerName = safeString(officerNameColumn and row[officerNameColumn] or nil, nil)
             or safeString(billData.issuerName, nil)
+            or officerIdentifier
             or getConfigValue('FallbackOfficerName', 'Unbekannter Officer')
 
         local amountFromRow = safeNumber(row.amount, nil)
@@ -878,8 +890,10 @@ local function backfillSyncFromVMSFines(limit)
             billData.locationOfViolation = getConfigValue('DefaultLocation', 'Unbekannt')
         end
 
+        local existingRecord = getSyncRecordByFineId(fineId)
         insertOrUpdateSyncRecord({
             fineId = fineId,
+            chargeId = existingRecord and existingRecord.charge_id or nil,
             billType = billType,
             officerSrc = nil,
             officerIdentifier = officerIdentifier,
@@ -887,15 +901,15 @@ local function backfillSyncFromVMSFines(limit)
             targetSrc = nil,
             targetIdentifier = targetIdentifier,
             targetName = targetName,
-            status = getConfigValue('SyncStatuses', {}).bill_created or 'bill_created',
-            attempts = 0,
-            lastError = nil,
+            status = existingRecord and safeString(existingRecord.status, nil) or (getConfigValue('SyncStatuses', {}).bill_created or 'bill_created'),
+            attempts = existingRecord and safeNumber(existingRecord.attempts, 0) or 0,
+            lastError = existingRecord and safeString(existingRecord.last_error, nil) or nil,
             payloadJson = jsonEncode({
                 billType = billType,
                 billData = billData,
                 options = {}
             }),
-            chargePayloadJson = nil
+            chargePayloadJson = existingRecord and existingRecord.charge_payload_json or nil
         })
 
         if not shouldSyncBillTypeToMDT(billType) then
