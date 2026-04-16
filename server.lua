@@ -2,6 +2,7 @@ local ESX = exports['es_extended']:getSharedObject()
 
 local RESOURCE_NAME = GetCurrentResourceName()
 local activeFineSyncs = {}
+local identifierNameCache = {}
 
 local function getConfigValue(key, fallback)
     if Config and Config[key] ~= nil then
@@ -148,6 +149,68 @@ local function getPlayerIdentifier(src)
     end
 
     return nil
+end
+
+local function resolveNameByIdentifier(identifier, fallback)
+    identifier = safeString(identifier, nil)
+    if not identifier then
+        return fallback
+    end
+
+    if not getConfigValue('ResolveNamesFromIdentifier', true) then
+        return fallback
+    end
+
+    if identifierNameCache[identifier] then
+        return identifierNameCache[identifier]
+    end
+
+    local identityTable = safeString(getConfigValue('IdentityTable', 'users'), 'users')
+    local identityIdentifierColumn = safeString(getConfigValue('IdentityIdentifierColumn', 'identifier'), 'identifier')
+
+    local ok, rowOrErr = pcall(function()
+        return MySQL.single.await(('SELECT * FROM `%s` WHERE `%s` = ? LIMIT 1'):format(identityTable, identityIdentifierColumn), { identifier })
+    end)
+
+    if not ok then
+        debugLog('Name resolve query failed for identifier=%s err=%s', identifier, tostring(rowOrErr))
+        return fallback
+    end
+
+    local row = rowOrErr
+    if type(row) ~= 'table' then
+        return fallback
+    end
+
+    local fullName = safeString(row.name, nil)
+        or safeString(row.charname, nil)
+        or safeString(row.character_name, nil)
+
+    if not fullName then
+        local firstName = safeString(row.firstname, nil) or safeString(row.firstName, nil)
+        local lastName = safeString(row.lastname, nil) or safeString(row.lastName, nil)
+        if firstName or lastName then
+            fullName = ((firstName or '') .. ' ' .. (lastName or '')):gsub('^%s+', ''):gsub('%s+$', '')
+        end
+    end
+
+    if not fullName and type(row.charinfo) == 'string' then
+        local charInfo = jsonDecode(row.charinfo)
+        if type(charInfo) == 'table' then
+            local firstName = safeString(charInfo.firstname, nil) or safeString(charInfo.firstName, nil)
+            local lastName = safeString(charInfo.lastname, nil) or safeString(charInfo.lastName, nil)
+            if firstName or lastName then
+                fullName = ((firstName or '') .. ' ' .. (lastName or '')):gsub('^%s+', ''):gsub('%s+$', '')
+            end
+        end
+    end
+
+    if fullName and fullName ~= '' then
+        identifierNameCache[identifier] = fullName
+        return fullName
+    end
+
+    return fallback
 end
 
 local function normalizeChargeCategory(category)
@@ -831,6 +894,8 @@ local function backfillSyncFromVMSFines(limit)
             OR b.target_identifier IS NULL
             OR b.officer_name IS NULL
             OR b.target_name IS NULL
+            OR b.officer_name REGEXP '^char[0-9]+:'
+            OR b.target_name REGEXP '^char[0-9]+:'
         ORDER BY f.`%s` DESC
         LIMIT ?
     ]]):format(finesTable, idColumn, idColumn), { limit or getConfigValue('FinesBackfillBatchSize', 50) }) or {}
@@ -869,6 +934,7 @@ local function backfillSyncFromVMSFines(limit)
         local targetName = safeString(targetNameColumn and row[targetNameColumn] or nil, nil)
             or safeString(billData.targetName, nil)
             or safeString(billData.receiverName, nil)
+            or resolveNameByIdentifier(targetIdentifier, nil)
             or targetIdentifier
             or getConfigValue('FallbackTargetName', 'Unbekannt')
 
@@ -878,6 +944,7 @@ local function backfillSyncFromVMSFines(limit)
             or safeString(billData.officerIdentifier, nil)
         local officerName = safeString(officerNameColumn and row[officerNameColumn] or nil, nil)
             or safeString(billData.issuerName, nil)
+            or resolveNameByIdentifier(officerIdentifier, nil)
             or officerIdentifier
             or getConfigValue('FallbackOfficerName', 'Unbekannter Officer')
 

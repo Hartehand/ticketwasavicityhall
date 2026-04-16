@@ -114,6 +114,9 @@ Config.VMSFineTargetIdentifierColumn = 'receiver'
 Config.VMSFineTargetNameColumn = nil
 Config.VMSFineOfficerIdentifierColumn = 'issuer'
 Config.VMSFineOfficerNameColumn = nil
+Config.ResolveNamesFromIdentifier = true
+Config.IdentityTable = 'users'
+Config.IdentityIdentifierColumn = 'identifier'
 
 -- Restrict command access quickly; keep nil for open access.
 -- Example: 'group.admin' or function(src) return IsPlayerAceAllowed(src, 'bridge.admin') end
